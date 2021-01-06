@@ -1,0 +1,113 @@
+// TODO: Add OpenCL kernel code here.
+//#pragma OPENCL EXTENSION cl_khr_fp64 : enable
+
+//inline bool willLive(__global int *inMatrix, int aliveNeighbours){                                       
+ //   return (inMatrix[(row)*n + col]) && (aliveNeighbours==3 || aliveNeighbours==2) ||                                      
+ //          (!(inMatrix[(row)*n + col]) && aliveNeighbours==3);                                                         
+//} 
+
+int index(int i, int j, int width)
+{
+	return j*width+i;
+}
+
+struct Pixel
+{
+	unsigned char r, g, b;
+};
+
+
+
+void writeBlackCell(__global struct Pixel* matrix, int i, int j, int width){
+	matrix[j*width + i].r = 0;
+	matrix[j*width + i].g = 0;
+	matrix[j*width + i].b = 0;
+}
+
+void writeWhiteCell(__global struct Pixel* matrix, int i, int j, int width){
+	matrix[j*width + i].r = 255;
+	matrix[j*width + i].g = 255;
+	matrix[j*width + i].b = 255;
+}
+bool isBlackCell(struct Pixel cell){
+	return cell.r==0 && cell.g==0  && cell.b==0 ;
+}
+
+
+__kernel void gameOfLife(__global  struct Pixel* inMatrix, __global struct Pixel* outMatrix, const unsigned int n){
+	
+	int col = get_global_id(0);
+	int row = get_global_id(1);
+
+	if(row == 0 || row == n - 1 || col == 0 || col == n - 1){
+		return;
+	}
+
+	int aliveNeighbours = 0;
+		int isAlive = !(isBlackCell(inMatrix[(row)*n + col]));
+
+		//mat[(row)*n + col] = 128 * isAlive;
+		
+		aliveNeighbours += !(isBlackCell(inMatrix[(row - 1)*n + col - 1]));
+		aliveNeighbours += !(isBlackCell(inMatrix[(row - 1)*n + col]));
+		aliveNeighbours += !(isBlackCell(inMatrix[(row - 1)*n + col + 1]));
+		aliveNeighbours += !(isBlackCell(inMatrix[(row)*n + col - 1]));
+		aliveNeighbours += !(isBlackCell(inMatrix[(row)*n + col + 1]));
+		aliveNeighbours += !(isBlackCell(inMatrix[(row + 1)*n + col - 1]));
+		aliveNeighbours += !(isBlackCell(inMatrix[(row + 1)*n + col]));
+		aliveNeighbours += !(isBlackCell(inMatrix[(row + 1)*n + col + 1]));
+		
+		
+		if ((isAlive && aliveNeighbours == 2) || (aliveNeighbours == 3))
+		{
+			writeWhiteCell(outMatrix, col, row, n);
+		}
+		else
+		{
+			writeBlackCell(outMatrix, col, row, n);
+		}
+	//if(input == 0)
+	//	return;
+//	barrier(CLK_GLOBAL_MEM_FENCE);
+	//nadji obrazac
+	
+	
+	//if (isAlive && (aliveNeighbours == 3 || aliveNeighbours == 2) || !isAlive && aliveNeighbours == 3) {
+	//		outMatrix[(row)*n + col] = 0;
+	//	}
+//	else{
+//		outMatrix[(row)*n + col] = 1;
+//	}
+
+	//printf("bio sam ovdje1");
+//	__global unsigned char* temp=inMatrix;
+//	inMatrix = outMatrix;
+	//outMatrix=temp;
+//	printf("bio sam ovdje");
+}
+
+__kernel void initMatrix(__global struct Pixel* inMatrix, const unsigned int width, const unsigned int height){
+
+	int i = get_global_id(0);
+	int j = get_global_id(1);
+
+	if(i >= width || j >= height) return;
+
+	inMatrix[j*width + i].r = 0;
+	inMatrix[j*width + i].g = 0;
+	inMatrix[j*width + i].b = 0;
+
+}
+__kernel void initMatrixWithImage(__global struct Pixel* inMatrix,__global struct Pixel* image, 
+									const unsigned int startX, const unsigned int startY, const unsigned int widthBoundary,
+									const unsigned int heightBoundary, const unsigned int matrixWidth, const unsigned int imageWidth){
+
+	int i = get_global_id(0);
+	int j = get_global_id(1);
+
+	if(i >= widthBoundary || i < startX || j >= heightBoundary || j < startY) return;
+
+	inMatrix[j*matrixWidth + i] = image[(j - startY)*imageWidth + (i - startX)];
+//	printf("%d ", (j - startY)*imageWidth + (i - startX));
+}
+
