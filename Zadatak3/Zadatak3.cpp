@@ -5,6 +5,9 @@
 #include <CL/cl.h>
 #include <string>
 #include <iostream>
+#include <iostream>       // std::cout, std::endl
+#include <thread>         // std::this_thread::sleep_for
+#include <chrono> 
 
 
 
@@ -106,7 +109,7 @@ void convertMatrix(unsigned char* matrix, unsigned int length) {
 }
 
 static void writeImage(const char* filename, const unsigned char* array, const int width, const int height) {
-	
+
 	FILE* file = fopen(filename, "wb");
 	fprintf(file, "P5\n%d %d\n255\n", width, height);
 	fwrite(array, sizeof(unsigned char), (size_t)width * (size_t)height, file);
@@ -147,7 +150,7 @@ static void readImage(const char* filename, unsigned char*& array, int& width, i
 	fread(image, sizeof(unsigned char), (size_t)width * (size_t)height, file);
 	fclose(file);
 	printf("%d", sizeof(image));
-	for (char i = 0; i < sizeof(image)/sizeof(image[0]); i++)
+	for (char i = 0; i < sizeof(image) / sizeof(image[0]); i++)
 	{
 		printf("%c", image[i]);
 	}
@@ -156,9 +159,9 @@ static void readImage(const char* filename, unsigned char*& array, int& width, i
 	array = image;
 }
 
-unsigned char* initMatrix(size_t* , size_t* );
-unsigned char* initMatrixWithImage(size_t* , size_t* );
-unsigned char* compressMatrix(unsigned char* matrix, const unsigned int width, const unsigned int height);
+unsigned char* initMatrix(size_t*, size_t*);
+unsigned char* initMatrixWithImage(size_t*, size_t*);
+//unsigned char* compressMatrix(unsigned char* matrix, const unsigned int width, const unsigned int height);
 
 unsigned char* convertBinaryToBlackAndWhiteMatrix(unsigned char* matrix, unsigned int length) {
 
@@ -170,13 +173,41 @@ unsigned char* convertBinaryToBlackAndWhiteMatrix(unsigned char* matrix, unsigne
 	return retMatrix;
 }
 
+
+int index(int i, int j, int width)
+{
+	return j * width + i;
+}
+
+
+bool isVerticalBlinker( unsigned char* matrix, unsigned int i, unsigned int j, const unsigned int width) {
+	return matrix[index(i, j, width)] == 0 &&
+		matrix[index(i, j - 1, width)] == 0 &&
+		matrix[index(i, j + 1, width)] == 0 &&
+		//svi zivi
+		matrix[index(i, j - 2, width)] == 1 &&
+		matrix[index(i, j + 2, width)] == 1 &&
+		matrix[index(i - 1, j - 2, width)] == 1 &&
+		matrix[index(i + 1, j - 2, width)] == 1 &&
+		matrix[index(i - 1, j + 2, width)] == 1 &&
+		matrix[index(i + 1, j + 2, width)] == 1 &&
+		matrix[index(i - 1, j - 1, width)] == 1 &&
+		matrix[index(i - 1, j, width)] == 1 &&
+		matrix[index(i - 1, j + 1, width)] == 1 &&
+		matrix[index(i + 1, j - 1, width)] == 1 &&
+		matrix[index(i + 1, j, width)] == 1 &&
+		matrix[index(i + 1, j + 1, width)] == 1;
+
+}
+
+
 int main() {
 	int width = -1;
 	int height = -1;
 	//unsigned char* buffer = nullptr;
-	
+
 	// Number of total work items - localSize must be devisor
-	
+
 	/*globalSize[0] = (size_t)ceil(sqrt(globalSizePerMatrix));
 	globalSize[1] = (size_t)ceil(sqrt(globalSizePerMatrix));*/
 
@@ -224,7 +255,7 @@ int main() {
 
 	// Build the program executable 
 	err = clBuildProgram(program, 0, NULL, NULL, NULL, NULL);
-	
+
 
 	if (err)
 	{
@@ -246,7 +277,7 @@ int main() {
 
 	int imageWidth, imageHeight;
 	unsigned char* imageBuffer = nullptr;
-	readImage("image.pgm", imageBuffer, imageWidth, imageHeight);
+	readImage("blinkerImage.pgm", imageBuffer, imageWidth, imageHeight);
 
 	writeImage("slika.pgm", imageBuffer, imageWidth, imageHeight);
 
@@ -270,7 +301,7 @@ int main() {
 		printf("%d ", matrix[i]);
 	}*/
 
-	
+
 
 	/*for (size_t i = 0; i < globalSize[0] * globalSize[1] / 8; i++)
 	{
@@ -292,7 +323,7 @@ int main() {
 	//Write out data set into the input array in device memory
 	err = clEnqueueWriteBuffer(queue, d_InMatrix, CL_TRUE, 0, imageSize, matrix, 0, NULL, NULL);
 	err = clEnqueueWriteBuffer(queue, d_OutMatrix, CL_TRUE, 0, imageSize, matrix, 0, NULL, NULL);
-
+	printf(TranslateOpenCLError(err));
 	clFinish(queue);
 
 	unsigned int xStart, yStart;
@@ -310,7 +341,7 @@ int main() {
 
 	printf(TranslateOpenCLError(err));
 
-	
+
 	cl_mem d_image;
 
 	d_image = clCreateBuffer(context, CL_MEM_READ_WRITE, static_cast<size_t>(imageWidth) * imageHeight, NULL, NULL);
@@ -318,7 +349,7 @@ int main() {
 
 	printf(TranslateOpenCLError(err));
 	unsigned int widthBoundary = xStart + imageWidth > globalSize[0] ? globalSize[0] : ((size_t)xStart + imageWidth);
-	unsigned int heightBoundary =yStart + imageHeight > globalSize[1] ? globalSize[1] : ((size_t)yStart + imageHeight);
+	unsigned int heightBoundary = yStart + imageHeight > globalSize[1] ? globalSize[1] : ((size_t)yStart + imageHeight);
 
 	err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_InMatrix);
 	err |= clSetKernelArg(kernel, 1, sizeof(cl_mem), &d_image);
@@ -339,30 +370,30 @@ int main() {
 	clEnqueueReadBuffer(queue, d_InMatrix, CL_TRUE, 0, imageSize, matrix, 0, NULL, NULL);
 
 	clFinish(queue);
-	
-	const std::string outFileWithImage = std::string("matricaSaSlikom") +  std::string(".pgm");
-	writeImage(outFileWithImage.c_str(), convertBinaryToBlackAndWhiteMatrix(matrix, globalSize[0]*globalSize[1]), globalSize[0], globalSize[1]);
 
-	clReleaseMemObject(d_InMatrix);
-	clReleaseMemObject(d_OutMatrix);
+	const std::string outFileWithImage = std::string("matricaSaSlikom") + std::string(".pgm");
+	writeImage(outFileWithImage.c_str(), convertBinaryToBlackAndWhiteMatrix(matrix, globalSize[0] * globalSize[1]), globalSize[0], globalSize[1]);
+
+	//clReleaseMemObject(d_InMatrix);
+	//clReleaseMemObject(d_OutMatrix);
 	clReleaseMemObject(d_image);
 
-
+	clReleaseKernel(kernel);
 
 	clFinish(queue);
 
-	unsigned char* compressedMatrix = nullptr;
-	//printf("kopresovana-------------------------------------------------");
-	compressedMatrix = compressMatrix(matrix, globalSize[0], globalSize[1]);
-	unsigned int compressedImageSize = imageSize / 8;
+	//unsigned char* compressedMatrix = nullptr;
+	////printf("kopresovana-------------------------------------------------");
+	//compressedMatrix = compressMatrix(matrix, globalSize[0], globalSize[1]);
+	//unsigned int compressedImageSize = imageSize / 8;
 
-	err = clEnqueueWriteBuffer(queue, d_InMatrix, CL_TRUE, 0, compressedImageSize, matrix, 0, NULL, NULL);
-	err = clEnqueueWriteBuffer(queue, d_OutMatrix, CL_TRUE, 0, compressedImageSize, matrix, 0, NULL, NULL);
+	/*err = clEnqueueWriteBuffer(queue, d_InMatrix, CL_TRUE, 0, compressedImageSize, matrix, 0, NULL, NULL);
+	err = clEnqueueWriteBuffer(queue, d_OutMatrix, CL_TRUE, 0, compressedImageSize, matrix, 0, NULL, NULL);*/
 
-//	int imageSize = globalSize[0] * globalSize[1];
+	//	int imageSize = globalSize[0] * globalSize[1];
+
+		// Create the compute kernel in the program we wish to run
 	
-	// Create the compute kernel in the program we wish to run
-	kernel = clCreateKernel(program, "gameOfLife", &err);
 	/*for (size_t i = 0; i < globalSize[0] * globalSize[1]; i++)
 	{
 		printf("%d ", matrix[i]);
@@ -370,29 +401,73 @@ int main() {
 	//
 	//writeImage("prviFajl.pgm", matrix, globalSize[0], globalSize[1]);
 	// Create the input and output arrays in device memory for our calculation
-	
 
-	for (int i = 0; i < 30; i++)
+	//printf("***************************************");
+	int i = 0;
+	while(true)
 	{
+		std::cout << "0 = sljedeca iteracija\n1 = detekcija + sljedeca iteracija\n -1 = kraj : " << std::endl;
+		int input;
+		scanf("%d", &input);
+
+		if (input == -1) {
+			break;
+		}
+		if (input == 0) {
+			kernel = clCreateKernel(program, "gameOfLife", &err);
+			err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_InMatrix);
+			err |= clSetKernelArg(kernel, 1, sizeof(cl_mem), &d_OutMatrix);
+			err |= clSetKernelArg(kernel, 2, sizeof(int), &globalSize[0]);
+			// Execute the kernel over the entire range of the data set  
+			//printf(TranslateOpenCLError(err));
+			err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalSize, localSize, 0, NULL, NULL);
+			//printf(TranslateOpenCLError(err));
+
+			// Wait for the command queue to get serviced before reading back results
+			clFinish(queue);
+		}
+		else if (input == 1) {
+			kernel = clCreateKernel(program, "gameOfLifeWithOscilator", &err);
+			err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_InMatrix);
+			err |= clSetKernelArg(kernel, 1, sizeof(cl_mem), &d_OutMatrix);
+			err |= clSetKernelArg(kernel, 2, sizeof(unsigned int), &xStart);
+			err |= clSetKernelArg(kernel, 3, sizeof(unsigned int), &yStart);
+			err |= clSetKernelArg(kernel, 4, sizeof(unsigned int), &widthBoundary);
+			err |= clSetKernelArg(kernel, 5, sizeof(unsigned int), &heightBoundary);
+			err |= clSetKernelArg(kernel, 6, sizeof(unsigned int), &globalSize[0]);
+			err |= clSetKernelArg(kernel, 7, sizeof(unsigned int), &imageWidth);
+			printf("uspio argumente: %s\n" , TranslateOpenCLError(err));
+			err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalSize, localSize, 0, NULL, NULL);
+			printf(TranslateOpenCLError(err));
+
+			// Wait for the command queue to get serviced before reading back results
+			clFinish(queue);
+		}
 		// Set the arguments to our compute kernel
-		err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_InMatrix);
-		err |= clSetKernelArg(kernel, 1, sizeof(cl_mem), &d_OutMatrix);
-		err |= clSetKernelArg(kernel, 2, sizeof(unsigned int), &globalSize[0]);
-		// Execute the kernel over the entire range of the data set  
-		err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalSize, localSize, 0, NULL, NULL);
 		
-		printf(TranslateOpenCLError(err));
-		// Wait for the command queue to get serviced before reading back results
-		clFinish(queue);
 
 		// Read the results from the device
 		clEnqueueReadBuffer(queue, d_OutMatrix, CL_TRUE, 0, imageSize, matrix, 0, NULL, NULL);
-		 
+		i++;
 		clFinish(queue);
 		err = clEnqueueWriteBuffer(queue, d_InMatrix, CL_TRUE, 0, imageSize, matrix, 0, NULL, NULL);
 		clFinish(queue);
+		
 		const std::string outFile = std::string("image") + std::to_string(i + 1) + std::string(".pgm");
 		writeImage(outFile.c_str(), convertBinaryToBlackAndWhiteMatrix(matrix, globalSize[0] * globalSize[1]), globalSize[0], globalSize[1]);
+
+		for (size_t k = 0; k < xStart + imageWidth; k++)
+		{
+			for (size_t j = 0; j < yStart + imageHeight; j++)
+			{
+				if (isVerticalBlinker(matrix, k, j, globalSize[0])) {
+					printf("uspoio i nasaooooooooooooo  %d" + (i + 1));
+					std::this_thread::sleep_for(std::chrono::seconds(1));
+					break;
+				}
+			}
+		}
+		printf("\nnije nasao  %d\n" + i);
 	}
 
 	// release OpenCL resources
@@ -426,7 +501,7 @@ unsigned char* compressMatrix(unsigned char* matrix, const unsigned int width, c
 
 	unsigned char* compMat = (unsigned char*)malloc(width * height / 8);
 	unsigned char* eightBitArr = (unsigned char*)malloc(8);
-	for (size_t i = 0, j = 0; i < width*height; i+=8, j++)
+	for (size_t i = 0, j = 0; i < width * height; i += 8, j++)
 	{
 		memcpy(eightBitArr, &matrix[i], 8 * sizeof(*matrix));
 		compMat[j] = ToByte(eightBitArr);
@@ -434,105 +509,103 @@ unsigned char* compressMatrix(unsigned char* matrix, const unsigned int width, c
 	return compMat;
 }
 
- unsigned char* initMatrix(size_t *globalSize, size_t *localSize) {
+unsigned char* initMatrix(size_t* globalSize, size_t* localSize) {
 
 
-	 cl_mem d_matrix;
+	cl_mem d_matrix;
 
-	 cl_mem d_a;
-	 unsigned char* matrix = nullptr;
+	cl_mem d_a;
+	unsigned char* matrix = nullptr;
 
-	 cl_platform_id cpPlatform;        // OpenCL platform
-	 cl_device_id device_id;           // device ID
-	 cl_context context;               // context
-	 cl_command_queue queue;           // command queue
-	 cl_program program;               // program
-	 cl_kernel kernel;                 // kernel
-
-
-
-	 cl_int err;
-	 // Number of work items in each local work group
+	cl_platform_id cpPlatform;        // OpenCL platform
+	cl_device_id device_id;           // device ID
+	cl_context context;               // context
+	cl_command_queue queue;           // command queue
+	cl_program program;               // program
+	cl_kernel kernel;                 // kernel
 
 
-	 matrix = (unsigned char*)malloc(globalSize[0] * globalSize[1]);
-	 // Bind to platform
-	 err = clGetPlatformIDs(1, &cpPlatform, NULL);
 
-	 // Get ID for the device
-	 err = clGetDeviceIDs(cpPlatform, CL_DEVICE_TYPE_GPU, 1, &device_id, NULL);
+	cl_int err;
+	// Number of work items in each local work group
 
-	 // Create a context  
-	 context = clCreateContext(0, 1, &device_id, NULL, NULL, &err);
 
-	 // Create a command queue 
-	 //cl_queue_properties prop[] = { CL_QUEUE_PROPERTIES, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE | CL_QUEUE_ON_DEVICE | CL_QUEUE_ON_DEVICE_DEFAULT,  CL_QUEUE_SIZE, 16, 0 };
-	 queue = clCreateCommandQueue(context, device_id, 0, &err);
+	matrix = (unsigned char*)malloc(globalSize[0] * globalSize[1]);
+	// Bind to platform
+	err = clGetPlatformIDs(1, &cpPlatform, NULL);
 
-	 char* kernelSource = readKernelSource("GameOfLife.cl");
+	// Get ID for the device
+	err = clGetDeviceIDs(cpPlatform, CL_DEVICE_TYPE_GPU, 1, &device_id, NULL);
 
-	 // Create the compute program from the source buffer
-	 program = clCreateProgramWithSource(context, 1, (const char**)&kernelSource, NULL, &err);
+	// Create a context  
+	context = clCreateContext(0, 1, &device_id, NULL, NULL, &err);
 
-	 // Build the program executable 
-	 err = clBuildProgram(program, 0, NULL, NULL, NULL, NULL);
+	// Create a command queue 
+	//cl_queue_properties prop[] = { CL_QUEUE_PROPERTIES, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE | CL_QUEUE_ON_DEVICE | CL_QUEUE_ON_DEVICE_DEFAULT,  CL_QUEUE_SIZE, 16, 0 };
+	queue = clCreateCommandQueue(context, device_id, 0, &err);
 
-	 if (err)
-	 {
-		 // Determine the size of the log
-		 size_t log_size;
-		 clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
+	char* kernelSource = readKernelSource("GameOfLife.cl");
 
-		 // Allocate memory for the log
-		 char* log = (char*)malloc(log_size);
+	// Create the compute program from the source buffer
+	program = clCreateProgramWithSource(context, 1, (const char**)&kernelSource, NULL, &err);
 
-		 // Get the log
-		 clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG, log_size, log, NULL);
+	// Build the program executable 
+	err = clBuildProgram(program, 0, NULL, NULL, NULL, NULL);
 
-		 // Print the log
-		 printf("%s\n", log);
+	if (err)
+	{
+		// Determine the size of the log
+		size_t log_size;
+		clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
 
-		 free(log);
-	 }
-	 // Create the compute kernel in the program we wish to run
-	 kernel = clCreateKernel(program, "initMatrix", &err);
+		// Allocate memory for the log
+		char* log = (char*)malloc(log_size);
 
-	 // Create the input and output arrays in device memory for our calculation
-	 d_matrix = clCreateBuffer(context, CL_MEM_READ_WRITE, globalSize[0] * globalSize[1], NULL, NULL);
-	 //printf("%s", TranslateOpenCLError(err));
-	 //Write out data set into the input array in device memory
-	 //err = clEnqueueWriteBuffer(queue, d_a, CL_TRUE, 0, imageSize, buffer, 0, NULL, NULL);
+		// Get the log
+		clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG, log_size, log, NULL);
 
-	 // Set the arguments to our compute kernel
-	 err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_matrix);
-	 err |= clSetKernelArg(kernel, 1, sizeof(unsigned int), &globalSize[0]);
-	 err |= clSetKernelArg(kernel, 2, sizeof(unsigned int), &globalSize[1]);
+		// Print the log
+		printf("%s\n", log);
 
-	 //printf("%s", TranslateOpenCLError(err));
-	 // Execute the kernel over the entire range of the data set  
-	 err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalSize, localSize, 0, NULL, NULL);
-	 printf("%s", TranslateOpenCLError(err));
-	 clFinish(queue);
+		free(log);
+	}
+	// Create the compute kernel in the program we wish to run
+	kernel = clCreateKernel(program, "initMatrix", &err);
 
-	 clEnqueueReadBuffer(queue, d_matrix, CL_TRUE, 0, globalSize[0] * globalSize[1], matrix, 0, NULL, NULL);
-	 //printf("%s", TranslateOpenCLError(err));
-	 clFinish(queue);
+	// Create the input and output arrays in device memory for our calculation
+	d_matrix = clCreateBuffer(context, CL_MEM_READ_WRITE, globalSize[0] * globalSize[1], NULL, NULL);
+	//printf("%s", TranslateOpenCLError(err));
+	//Write out data set into the input array in device memory
+	//err = clEnqueueWriteBuffer(queue, d_a, CL_TRUE, 0, imageSize, buffer, 0, NULL, NULL);
 
-	 /*for (size_t i = 0; i < globalSize[0]*globalSize[1]; i++)
-	 {
-		 printf("%d ", matrix[i]
-		 );
-	 }*/
+	// Set the arguments to our compute kernel
+	err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_matrix);
+	err |= clSetKernelArg(kernel, 1, sizeof(unsigned int), &globalSize[0]);
+	err |= clSetKernelArg(kernel, 2, sizeof(unsigned int), &globalSize[1]);
 
-	 // release OpenCL resources
-	 clReleaseMemObject(d_matrix);
-	 clReleaseProgram(program);
-	 clReleaseKernel(kernel);
-	 clReleaseCommandQueue(queue);
-	 clReleaseContext(context);
+	//printf("%s", TranslateOpenCLError(err));
+	// Execute the kernel over the entire range of the data set  
+	err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalSize, localSize, 0, NULL, NULL);
+	printf("%s", TranslateOpenCLError(err));
+	clFinish(queue);
 
-	 return matrix;
+	clEnqueueReadBuffer(queue, d_matrix, CL_TRUE, 0, globalSize[0] * globalSize[1], matrix, 0, NULL, NULL);
+	//printf("%s", TranslateOpenCLError(err));
+	clFinish(queue);
+
+	/*for (size_t i = 0; i < globalSize[0]*globalSize[1]; i++)
+	{
+		printf("%d ", matrix[i]
+		);
+	}*/
+
+	// release OpenCL resources
+	clReleaseMemObject(d_matrix);
+	clReleaseProgram(program);
+	clReleaseKernel(kernel);
+	clReleaseCommandQueue(queue);
+	clReleaseContext(context);
+
+	return matrix;
 
 }
-
-
