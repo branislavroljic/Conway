@@ -10,6 +10,10 @@ int index(int i, int j, int width)
 {
 	return j*width+i;
 }
+struct Pixel
+{
+	unsigned char r, g, b;
+};
 
 
 bool isVerticalBlinker(__global unsigned char* matrix, unsigned int i, unsigned int j, const unsigned int width){
@@ -21,8 +25,8 @@ bool isVerticalBlinker(__global unsigned char* matrix, unsigned int i, unsigned 
 			matrix[index(i, j + 2, width)] == 1 &&
 			matrix[index(i - 1, j - 2, width)] == 1 &&
 			matrix[index(i + 1, j - 2, width)] == 1 &&
-			matrix[index(i - 1, j+2, width)] == 1 &&
-			matrix[index(i + 1, j+2, width)] == 1 &&
+			matrix[index(i - 1, j + 2, width)] == 1 &&
+			matrix[index(i + 1, j + 2, width)] == 1 &&
 			matrix[index(i - 1, j - 1, width)] == 1 &&
 			matrix[index(i - 1, j , width)] == 1 &&
 			matrix[index(i - 1, j + 1 , width)] == 1 &&
@@ -32,39 +36,51 @@ bool isVerticalBlinker(__global unsigned char* matrix, unsigned int i, unsigned 
 			
 }
 
-void writeVerticalBlinker(__global unsigned char* matrix, unsigned int i, unsigned int j, const unsigned int width){
-	matrix[index(i,j,width)] == 128;
-	matrix[index(i,j - 1,width)] == 128;
-	matrix[index(i,j + 1,width)] == 128;
-}
 
-__kernel void gameOfLifeWithOscilator(__global unsigned char* inMatrix, __global unsigned char* outMatrix, 
-									const unsigned int startX, const unsigned int startY, const unsigned int widthBoundary,
-									const unsigned int heightBoundary, const unsigned int matrixWidth, const unsigned int imageWidth){
-									
-	printf("bio pocetak");				
+__kernel void detector (__global unsigned char* outMatrix, __global struct Pixel* RGBSegment, const unsigned int startX,
+												const unsigned int startY, const unsigned int widthBoundary,
+												const unsigned int heightBoundary, const unsigned int matrixWidth, const unsigned int imageWidth) {
+		
 	int col = get_global_id(0);
 	int row = get_global_id(1);
 
-	int n = matrixWidth;
+	if(col < startX || col >= widthBoundary || row < startY || row >= heightBoundary)
+		return;
 	
-	if(row > 0 && row < n - 1 && col > 0 && col < n - 1){
-	printf("bio if");
-		int aliveNeighbours = 0;
-		int isAlive = !(inMatrix[(row)*n + col]);
+	if(outMatrix[row*matrixWidth + col] == 0 && (row - startY > 1) && isVerticalBlinker(outMatrix, col, row, matrixWidth)){
+		RGBSegment[(row - startY)*imageWidth + (col - startX)].g = 255;
+		RGBSegment[(row - startY - 1)*imageWidth + (col - startX)].g = 255;
+		RGBSegment[(row - startY + 1)*imageWidth + (col - startX)].g = 255;
+	}
+}
 
-		//mat[(row)*n + col] = 128 * isAlive;
-		
-		aliveNeighbours += !(inMatrix[(row - 1)*n + col - 1]);
-		aliveNeighbours += !(inMatrix[(row - 1)*n + col]);
-		aliveNeighbours += !(inMatrix[(row - 1)*n + col + 1]);
-		aliveNeighbours += !(inMatrix[(row)*n + col - 1]);
-		aliveNeighbours += !(inMatrix[(row)*n + col + 1]);
-		aliveNeighbours += !(inMatrix[(row + 1)*n + col - 1]);
-		aliveNeighbours += !(inMatrix[(row + 1)*n + col]);
-		aliveNeighbours += !(inMatrix[(row + 1)*n + col + 1]);
-		
-		
+
+__kernel void gameOfLifeOscilator(__global unsigned char* inMatrix, __global unsigned char* outMatrix, __global struct Pixel* RGBSegment, const unsigned int startX, const unsigned int startY, const unsigned int widthBoundary,
+									const unsigned int heightBoundary, const unsigned int matrixWidth, const unsigned int imageWidth ){
+	
+	int col = get_global_id(0);
+	int row = get_global_id(1);
+	int n = matrixWidth;
+
+	if(row == 0 || row == n - 1 || col == 0 || col == n - 1){
+		return;
+	}
+
+
+	int aliveNeighbours = 0;
+	int isAlive = !(inMatrix[(row)*n + col]);
+
+	//mat[(row)*n + col] = 128 * isAlive;
+	
+	aliveNeighbours += !(inMatrix[(row - 1)*n + col - 1]);
+	aliveNeighbours += !(inMatrix[(row - 1)*n + col]);
+	aliveNeighbours += !(inMatrix[(row - 1)*n + col + 1]);
+	aliveNeighbours += !(inMatrix[(row)*n + col - 1]);
+	aliveNeighbours += !(inMatrix[(row)*n + col + 1]);
+	aliveNeighbours += !(inMatrix[(row + 1)*n + col - 1]);
+	aliveNeighbours += !(inMatrix[(row + 1)*n + col]);
+	aliveNeighbours += !(inMatrix[(row + 1)*n + col + 1]);
+
 		if ((isAlive && aliveNeighbours == 2) || (aliveNeighbours == 3))
 		{
 			outMatrix[(row)*n + (col)] = 0;
@@ -73,21 +89,30 @@ __kernel void gameOfLifeWithOscilator(__global unsigned char* inMatrix, __global
 		{
 			outMatrix[(row)*n + (col)] = 1;
 		}
-	}
-	printf("bio barijera  ");
-//	barrier(CLK_GLOBAL_MEM_FENCE);
-//	printf("bio");
-//	if(col < startX || col >= widthBoundary || row < startY || row >= heightBoundary)
-//		return;
-//	if( isHorizontalBlinker(outMatrix, col, row, matrixWidth)){
-//		printf("nasao-------------------------------------------------------");
-//	}
-//	else{
-//	printf("NIJE NASAOOOo-------------------------------------------------------");
-//	}
+		
 	
+	if(col < startX || col >= widthBoundary || row < startY || row >= heightBoundary)
+		return;
+	
+	if(outMatrix[row*n + col] == 0){
+		RGBSegment[(row - startY)*imageWidth + (col - startX)].r = 0;
+		RGBSegment[(row - startY)*imageWidth + (col - startX)].g = 0;
+		RGBSegment[(row - startY)*imageWidth + (col - startX)].b = 0;
+	}else{
+		RGBSegment[(row - startY)*imageWidth + (col - startX)].r = 255;
+		RGBSegment[(row - startY)*imageWidth + (col - startX)].g = 255;
+		RGBSegment[(row - startY)*imageWidth + (col - startX)].b = 255;
+	}
+		
+	//if( isVerticalBlinker(outMatrix, col, row, n)){
+	//	writeVerticalBlinker(outMatrix, col, row, n);
+		//printf("nasao-------------------------------------------------------");
+	//}
+	//else{
+	//printf("NIJE NASAOOOo-------------------------------------------------------");
+//	}
+	//
 }
-
 __kernel void gameOfLife(__global unsigned char* inMatrix, __global unsigned char* outMatrix, const unsigned int n){
 	
 	int col = get_global_id(0);
@@ -139,6 +164,17 @@ if ((isAlive && aliveNeighbours == 2) || (aliveNeighbours == 3))
 //	printf("bio sam ovdje");
 }
 
+__kernel void getSubsegment(__global unsigned char* matrix, __global unsigned char* subsegment, const unsigned int matrixWidth, const unsigned int x0, const unsigned int y0, const unsigned int width, const unsigned int height){
+	int col = get_global_id(0);
+	int row = get_global_id(1);
+	
+	if(row < x0 || row >= x0 + width || col < y0 || col >= y0 + height){
+		return;	
+	}
+	
+	subsegment[(row - y0)*width + (col - x0)] = matrix[row*matrixWidth + col];
+}
+
 __kernel void initMatrix(__global unsigned char* inMatrix, const unsigned int width, const unsigned int height){
 
 	int i = get_global_id(0);
@@ -162,20 +198,3 @@ __kernel void initMatrixWithImage(__global unsigned char* inMatrix,__global unsi
 //	printf("%d ", (j - startY)*imageWidth + (i - startX));
 }
 
-private unsigned char ToByte(char b[8])
-{
-    unsigned char c = 0;
-    for (int i=0; i < 8; ++i)
-        if (b[i])
-            c |= 1 << i;
-    return c;
-}
-
-
-unsigned char* FromByte(unsigned char c)
-{
-	unsigned char b[8];
-	for (int i = 0; i < 8; ++i)
-		b[i] = (c & (1 << i)) != 0;
-	return b;
-}
