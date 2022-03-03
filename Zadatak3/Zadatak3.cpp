@@ -5,7 +5,12 @@
 #include <CL/cl.h>
 #include <string>
 #include <iostream>
+#include <set>
+#pragma warning (disable : 6031)
+#pragma warning (disable : 6011)
 
+const int LOCAL_SIZE = 16;
+const int MAX_KERNEL_NUM = 10;
 
 const char* TranslateOpenCLError(cl_int errorCode)
 {
@@ -96,12 +101,23 @@ static char* readKernelSource(const char* filename) {
 	return kernelSource;
 }
 
-void convertMatrix(unsigned char* matrix, unsigned int length) {
-	for (size_t i = 0; i < length; i++)
+//funkcija za obradu unosa, korisnik moze unijeti slova koja su dio baseString parametra
+//kada korisnik unese jedno od ponudjenih slova, unos predstavlja povratnu vrijenost
+char getCharacterWithEscape(const std::string& baseString)
+{
+	const int ASCII_ESCAPE = 27;
+	std::set<char> baseSet;
+	for (char it : baseString)
 	{
-		if (matrix[i] == 1)
-			matrix[i] = 255;
+		baseSet.insert(it);
 	}
+	char c;
+	do
+	{
+		c = getchar();
+	} while (!baseSet.count(c) && c != ASCII_ESCAPE);
+
+	return c;
 }
 
 
@@ -109,8 +125,8 @@ struct Pixel {
 	unsigned char r, g, b;
 };
 
-
-static void writeImage(const char* filename, const unsigned char* array, const int width, const int height) {
+//upis slike sa .pgm ekstenzijom u fajl
+static void writePGMImage(const char* filename, const unsigned char* array, const int width, const int height) {
 
 	FILE* file = fopen(filename, "wb");
 	fprintf(file, "P5\n%d %d\n255\n", width, height);
@@ -118,6 +134,7 @@ static void writeImage(const char* filename, const unsigned char* array, const i
 	fclose(file);
 }
 
+//upis slike sa .ppm ekstenzijom u fajl
 void writePPMImage(const char* filename, const Pixel* array, const int width, const int height)
 {
 	FILE* fp = fopen(filename, "wb"); /* b - binary mode */
@@ -126,35 +143,34 @@ void writePPMImage(const char* filename, const Pixel* array, const int width, co
 	fclose(fp);
 }
 
-
-static void readImage(const char* filename, unsigned char*& array, int& width, int& height) {
+//citanje slike sa .pgm ekstenzijom iz fajla
+static void readPGMImage(const char* filename, unsigned char*& array, int& width, int& height) {
 	FILE* file = fopen(filename, "rb");
+	if (file == NULL) {
+		throw "file not present";
+	}
 
 	if (!fscanf(file, "P5\n%d %d\n255\n", &width, &height)) {
 		throw "error";
 	}
-	FILE* fileptr;
-	char* buffer;
-	long filelen;
 
-	unsigned char* image = (unsigned char*)calloc((size_t)width * height, sizeof(unsigned char));
-
+	unsigned char* image = nullptr;
+	image = (unsigned char*)calloc((size_t)width * height, sizeof(unsigned char));
+	if (image == 0) {
+		return;
+	}
 	fread(image, sizeof(unsigned char), (size_t)width * (size_t)height, file);
 	fclose(file);
-	printf("%d", sizeof(image));
-	for (char i = 0; i < sizeof(image) / sizeof(image[0]); i++)
-	{
-		printf("%c", image[i]);
-	}
-	const std::string outFile = std::string("imageBane") + std::string(".pgm");
-	writeImage(outFile.c_str(), image, width, height);
 	array = image;
 }
 
+//inicijalizovanje svijeta. Pri pokretanju programa, matrica se inicijalizuje tako da su svi pixeli bijele boje.
+unsigned char* initMatrix(cl_program program, cl_kernel kernel, cl_context context, cl_command_queue queue, size_t* globalSize, size_t* localSize, int kernelNum);
 
-unsigned char* initMatrix(cl_program program, cl_kernel kernel, cl_context context, cl_command_queue queue, size_t* globalSize, size_t* localSize);
+//inizijalizacija svijeta sa slikom, korisnik ce unijeti koordinate na koje zeli smjestit sliku, i slika ce biti smjestena unutar svijeta
 unsigned char* initMatrixWithImage(size_t*, size_t*);
 
+//konverzija binarne matrice u matricu u kojoj je bijeli pixel setovan na 255, a crni na 0
 unsigned char* convertBinaryToBlackAndWhiteMatrix(unsigned char* matrix, unsigned int length) {
 
 	unsigned char* retMatrix = (unsigned char*)malloc(length);
@@ -169,27 +185,6 @@ unsigned char* convertBinaryToBlackAndWhiteMatrix(unsigned char* matrix, unsigne
 	}
 	return retMatrix;
 }
-
-
-
-//unsigned char* convertBinaryToPGM(unsigned char* matrix, unsigned int length) {
-//	//h = (Pixel*)malloc(bytes);
-//	unsigned char* retMatrix = (unsigned char*)malloc(length);
-//	for (size_t i = 0; i < length; i++)
-//	{
-//		if (matrix[i] == 0) {
-//			retMatrix[i] = 0;
-//		}
-//		else if (matrix[i] == 1) {
-//			retMatrix[i] = 255;
-//		}
-//		else {
-//			retMatrix[i] = 128;
-//		}
-//	}
-//	return retMatrix;
-//}
-
 
 int index(int i, int j, int width)
 {
@@ -209,33 +204,19 @@ int main() {
 	cl_context context;               // context
 	cl_command_queue queue;           // command queue
 	cl_program program;               // program
-	cl_kernel kernel = nullptr;                 // kernel
+	cl_kernel kernel = nullptr;			// kernel
 
 	cl_int err;
-
-
-	//unsigned char* matrix = nullptr;
-
-	// Number of work items in each local work group
-
-
-	//matrix = (unsigned char*)malloc(globalSize[0] * globalSize[1]);
 	// Bind to platform
 	err = clGetPlatformIDs(1, &cpPlatform, NULL);
 
 	// Get ID for the device
 	err = clGetDeviceIDs(cpPlatform, CL_DEVICE_TYPE_GPU, 1, &device_id, NULL);
 
-	unsigned long deviceGlobalMemSize;
-	clGetDeviceInfo(device_id, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(deviceGlobalMemSize), &deviceGlobalMemSize, NULL);
-
-	printf("\tCL_DEVICE_GLOBAL_MEM_SIZE : %lu\n", deviceGlobalMemSize);
-
 	// Create a context  
 	context = clCreateContext(0, 1, &device_id, NULL, NULL, &err);
 
 	// Create a command queue 
-	//cl_queue_properties prop[] = { CL_QUEUE_PROPERTIES, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE | CL_QUEUE_ON_DEVICE | CL_QUEUE_ON_DEVICE_DEFAULT,  CL_QUEUE_SIZE, 16, 0 };
 	queue = clCreateCommandQueue(context, device_id, 0, &err);
 
 	char* kernelSource = readKernelSource("GameOfLife.cl");
@@ -265,200 +246,265 @@ int main() {
 		free(log);
 	}
 
-	int imageWidth, imageHeight;
-	unsigned char* imageBuffer = nullptr;
-	readImage("threeBlinkerImage.pgm", imageBuffer, imageWidth, imageHeight);
 
-	writeImage("slika.pgm", imageBuffer, imageWidth, imageHeight);
-
-	int imageSize = imageWidth * imageHeight;
-
+	unsigned long deviceGlobalMemSize;
 	size_t globalSize[2], localSize[2];
-	localSize[0] = localSize[1] = 16;
+	int kernelNum;
 
-	int maxGlobalSize = deviceGlobalMemSize;
-	printf("max global size %d\n", maxGlobalSize);
-	int globalSizePerMatrix = maxGlobalSize / 10;
+	int userMatrixDimension = -1;
 
-	globalSize[0] = (size_t)ceil((size_t)((500) / (float)localSize[0])) * localSize[0];
-	globalSize[1] = (size_t)ceil((size_t)((500) / (float)localSize[1])) * localSize[1];
-	//printf("global size %d\n", globalSize[0]);
 
-	int worldSize = globalSize[0] * globalSize[1];
+	clGetDeviceInfo(device_id, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(deviceGlobalMemSize), &deviceGlobalMemSize, NULL);
+	unsigned int MaxDimensionSizePerMatrix = sqrt(deviceGlobalMemSize / 3);
+
+	printf("=============================================DOBRODOSLI U CONWAY========================================================\n");
+
+	printf("\nSvijet je predstavljen u obliku kvadratne matrice. Unesite dimenziju svijeta ili -1 za podrazumijevane vrijednosti: \n");
+	printf("dimenzija = ");
+	scanf(" %d", &userMatrixDimension);
+
+
+	if (userMatrixDimension <= 0 || userMatrixDimension > MaxDimensionSizePerMatrix) {
+		userMatrixDimension = MaxDimensionSizePerMatrix;
+	}
+
+	localSize[0] = localSize[1] = LOCAL_SIZE;
+
+	globalSize[0] = (size_t)ceil((size_t)((userMatrixDimension) / (float)localSize[0])) * localSize[0];
+	globalSize[1] = (size_t)ceil((size_t)((userMatrixDimension) / (float)localSize[1])) * localSize[1];
+
+
+	const int worldSize = globalSize[0] * globalSize[1];
+
+	printf("\nUnesite broj pokretanja kernela u kojima ce se izvrsavati obrada slike : \n");
+	printf("broj kernela = ");
+	scanf(" %d", &kernelNum);
+
+	if (kernelNum < 0 || kernelNum > MAX_KERNEL_NUM) {
+		kernelNum = 1;
+	}
 
 	unsigned char* matrix = nullptr;
 
-	matrix = initMatrix(program, kernel, context, queue, globalSize, localSize);
-	/*for (size_t i = 0; i < globalSize[0] * globalSize[1]; i++)
-	{
-		printf("%d ", matrix[i]);
-	}*/
+	//inicijalizacija svijeta
+	matrix = initMatrix(program, kernel, context, queue, globalSize, localSize, kernelNum);
 
-
-
-	/*for (size_t i = 0; i < globalSize[0] * globalSize[1] / 8; i++)
-	{
-		printf("%d ", compressedMatrix[i]);
-	}
-	*/
-	/*printf("velicina obicne: %d ", sizeof(matrix) / sizeof(matrix[0]));
-	printf("velicina compressed: %d ", sizeof(compressedMatrix) / sizeof(compressedMatrix[0]));*/
-
-	const std::string outFile = std::string("matrica") + std::string(".pgm");
-
-	writeImage(outFile.c_str(), matrix, globalSize[0], globalSize[1]);
-
-
+	//alokacija prostora za matrice koje predstavljaju stanje prije i nakon jedne iteracije
 	d_InMatrix = clCreateBuffer(context, CL_MEM_READ_WRITE, worldSize, NULL, NULL);
 
 	d_OutMatrix = clCreateBuffer(context, CL_MEM_READ_WRITE, worldSize, NULL, NULL);
 
-	//Write out data set into the input array in device memory
+	//Upis podataka na alocirani prostor na disku
 	err = clEnqueueWriteBuffer(queue, d_InMatrix, CL_TRUE, 0, worldSize, matrix, 0, NULL, NULL);
-	err = clEnqueueWriteBuffer(queue, d_OutMatrix, CL_TRUE, 0, worldSize, matrix, 0, NULL, NULL);
-	//printf(TranslateOpenCLError(err));
 	clFinish(queue);
 
-	/*while (true) {
-		printf("\n-----Opcije-----\n1 = unosenje piksela su \n");
-	}*/
-	unsigned int xStart, yStart;
+	unsigned int xStart = 1, yStart = 1;
+	int imageWidth = -1, imageHeight = -1;
+	unsigned char* imageBuffer = nullptr;
+	int imageSize;
 
-	std::cout << "Unesite koordinate : " << std::endl;
-	//std::cin >> xStart >> yStart;
-	scanf("%d", &xStart);
-	scanf("%d", &yStart);
-	/*readImage("C:\\Users\\PC\\source\\repos\\TreciZadatak\\OposZadaci2020\\image0.pgm", matrix, width, height);
-	int imageSize = width * height;*/
 
-	//std::cout << "Unijeli ste koordinate :" << xStart + " " + yStart << std::endl;
-	//printf("unijeli ste koordinate: %d  %d\n", xStart, yStart);
+	char answer;
 
+	//provjera da li korisnik zeli izvrsiti inicijalizaciju svijata slikom, moguce je vise puta unijeti sliku
 	kernel = clCreateKernel(program, "initMatrixWithImage", &err);
-	printf(TranslateOpenCLError(err));
+	do {
+		printf("\nDa li zelite inicijalizovati svijet sa slikom?(y/n): ");
+		answer = getCharacterWithEscape("yn");
 
-	cl_mem d_image;
+		if (answer == 'y') {
+			char repeat;
+			do {
+				printf("\nUnesite koordinate : \n");
+				printf("x = ");
+				scanf(" %d", &xStart);
+				printf("y = ");
+				scanf(" %d", &yStart);
 
-	d_image = clCreateBuffer(context, CL_MEM_READ_WRITE, static_cast<size_t>(imageWidth) * imageHeight, NULL, NULL);
-	err = clEnqueueWriteBuffer(queue, d_image, CL_TRUE, 0, static_cast<size_t>(imageWidth) * imageHeight, imageBuffer, 0, NULL, NULL);
+				if (xStart > globalSize[0] || xStart < 0 || yStart > globalSize[1] || yStart < 0) {
 
-	//printf(TranslateOpenCLError(err));
+					printf("\nIndeksi su izvan granica svijeta(\"sirina\" i \"visina\" svijeta -> %d), da li zelite da pokusate ponovo?(y/n): \n", (int)globalSize[0]);
+					repeat = getCharacterWithEscape("yn");
+				}
+				else {
+					std::string path;
+					printf("\nUnesite putanju do slike(**Napomena : slika mora biti u .pgm formatu) : \n");
+					std::cin >> path;
+					readPGMImage(path.c_str(), imageBuffer, imageWidth, imageHeight);
 
-	unsigned int widthBoundary = static_cast<unsigned long long>(xStart) + imageWidth > globalSize[0] ? globalSize[0] : ((size_t)xStart + imageWidth);
-	unsigned int heightBoundary = static_cast<unsigned long long>(yStart) + imageHeight > globalSize[1] ? globalSize[1] : ((size_t)yStart + imageHeight);
-
-	err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_InMatrix);
-	err |= clSetKernelArg(kernel, 1, sizeof(cl_mem), &d_image);
-	err |= clSetKernelArg(kernel, 2, sizeof(unsigned int), &xStart);
-	err |= clSetKernelArg(kernel, 3, sizeof(unsigned int), &yStart);
-	err |= clSetKernelArg(kernel, 4, sizeof(unsigned int), &widthBoundary);
-	err |= clSetKernelArg(kernel, 5, sizeof(unsigned int), &heightBoundary);
-	err |= clSetKernelArg(kernel, 6, sizeof(unsigned int), &globalSize[0]);
-	err |= clSetKernelArg(kernel, 7, sizeof(unsigned int), &imageWidth);
-
-	// Execute the kernel over the entire range of the data set  
-	err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalSize, localSize, 0, NULL, NULL);
-
-	//printf(TranslateOpenCLError(err));
-	// Wait for the command queue to get serviced before reading back results
-	clFinish(queue);
+					imageSize = imageWidth * imageHeight;
 
 
-	clEnqueueReadBuffer(queue, d_InMatrix, CL_TRUE, 0, worldSize, matrix, 0, NULL, NULL);
+					//alokacija prostora za sliku koja ce biti ubacena u svijet
+					cl_mem d_image;
 
-	clFinish(queue);
+					d_image = clCreateBuffer(context, CL_MEM_READ_WRITE, static_cast<size_t>(imageWidth) * imageHeight, NULL, NULL);
+					err = clEnqueueWriteBuffer(queue, d_image, CL_TRUE, 0, static_cast<size_t>(imageWidth) * imageHeight, imageBuffer, 0, NULL, NULL);
 
-	const std::string outFileWithImage = std::string("matricaSaSlikom") + std::string(".pgm");
-	writeImage(outFileWithImage.c_str(), convertBinaryToBlackAndWhiteMatrix(matrix, globalSize[0] * globalSize[1]), globalSize[0], globalSize[1]);
+					unsigned int widthBoundary = static_cast<unsigned long long>(xStart) + imageWidth > globalSize[0] ? globalSize[0] : ((size_t)xStart + imageWidth);
+					unsigned int heightBoundary = static_cast<unsigned long long>(yStart) + imageHeight > globalSize[1] ? globalSize[1] : ((size_t)yStart + imageHeight);
 
-	clReleaseMemObject(d_image);
+					//podesavanje parametara kernela
+					err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_InMatrix);
+					err |= clSetKernelArg(kernel, 1, sizeof(cl_mem), &d_image);
+					err |= clSetKernelArg(kernel, 2, sizeof(unsigned int), &xStart);
+					err |= clSetKernelArg(kernel, 3, sizeof(unsigned int), &yStart);
+					err |= clSetKernelArg(kernel, 4, sizeof(unsigned int), &widthBoundary);
+					err |= clSetKernelArg(kernel, 5, sizeof(unsigned int), &heightBoundary);
+					err |= clSetKernelArg(kernel, 6, sizeof(unsigned int), &globalSize[0]);
+					err |= clSetKernelArg(kernel, 7, sizeof(unsigned int), &imageWidth);
+
+					//pokretanje kernela "initMatrixWithImage" koji ima za cilj da inicijalizuje matricu sa unijetom slikom 
+					// Execute the kernel over the entire range of the data set  
+					err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalSize, localSize, 0, NULL, NULL);
+
+					// Wait for the command queue to get serviced before reading back results
+					clFinish(queue);
+					//zavrsetak inizijalizacije svijeta sa slikom
+					clEnqueueReadBuffer(queue, d_InMatrix, CL_TRUE, 0, worldSize, matrix, 0, NULL, NULL);
+					clFinish(queue);
+
+					clReleaseMemObject(d_image);
+					break;
+				}
+			} while (repeat == 'y');
+		}
+	} while (answer == 'y');
+
 
 	clReleaseKernel(kernel);
-
 	clFinish(queue);
 
+
 	int i = 0;
+	bool reverse = false;
+	int offset = globalSize[0] / kernelNum;
+
+	//pocetak glavnog dijela programa
+
+
+	//koristim Pixel da reprezentujem RGB sliku koja ce biti sacuvana, dimenzije slike su jednaka dimenzijama svijeta
+	Pixel* bufferSeg = nullptr;
+	size_t bytes = worldSize * sizeof(Pixel);
+	bufferSeg = (Pixel*)malloc(bytes);
+
+	//alokacija prostora na uredjaju, koristim ga pri detekciji oscilatornog obrasca
+	cl_mem d_imageSegment = clCreateBuffer(context, CL_MEM_READ_WRITE, bytes, NULL, NULL);
+
 	while (true)
 	{
-		std::cout << "\n\n-----Opcije :--------\n1 = sljedeca iteracija\n0 = detekcija + sljedeca iteracija\n2 = izdvajanje podsegmenta\nbroj = iteracija na koju se skace\n-1 = kraj : " << std::endl;
+		std::cout << "\n\n-----Opcije :--------\n0 = detekcija + sljedeca iteracija\n1 = sljedeca iteracija\n2 = izdvajanje podsegmenta\n[broj] = iteracija na koju se skace\n-1 = KRAJ IGRE! \n\nunos : ";
 		int input;
 		scanf("%d", &input);
 
 		if (input == -1) {
 			break;
 		}
+		//korisnik zeli sljedecu iteraciju + detekciju
 		else if (input == 0) {
-			Pixel* bufferSeg = nullptr;
-			size_t bytes = imageSize * sizeof(Pixel);
-			bufferSeg = (Pixel*)malloc(bytes);
+			printf("\nProcesiranje....\n");
 
-			cl_mem d_imageSegment = clCreateBuffer(context, CL_MEM_READ_WRITE, bytes, NULL, NULL);
-
+			//kernal gameOfLifeOscilator izracunava sljedecu iteraciju, te napraviti RGB sliku od date binarne matrice
 			kernel = clCreateKernel(program, "gameOfLifeOscilator", &err);
-			err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_InMatrix);	
-			err |= clSetKernelArg(kernel, 1, sizeof(cl_mem), &d_OutMatrix);
-			err |= clSetKernelArg(kernel, 2, sizeof(cl_mem), &d_imageSegment);
+
+			//pokrecem kerenel onoliko puta koliko je korisnik specifikovao
+			for (size_t kernelIteration = 0, startCol = 0; kernelIteration < kernelNum; kernelIteration++, startCol += offset)
+			{
+
+				unsigned int iterationOffset = offset * kernelIteration;
+
+				//podesavanje parametara u kernelu
+				err = clSetKernelArg(kernel, 0, sizeof(cl_mem), reverse ? &d_OutMatrix : &d_InMatrix);
+				err |= clSetKernelArg(kernel, 1, sizeof(cl_mem), reverse ? &d_InMatrix : &d_OutMatrix);
+				err |= clSetKernelArg(kernel, 2, sizeof(cl_mem), &d_imageSegment);
+				err |= clSetKernelArg(kernel, 3, sizeof(unsigned int), &globalSize[0]);
+				err |= clSetKernelArg(kernel, 4, sizeof(unsigned int), &startCol);
+				err |= clSetKernelArg(kernel, 5, sizeof(unsigned int), &offset);
+				err |= clSetKernelArg(kernel, 6, sizeof(unsigned int), &iterationOffset);
+
+				err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalSize, localSize, 0, NULL, NULL);
+				//printf(TranslateOpenCLError(err));
 
 
-			err |= clSetKernelArg(kernel, 3, sizeof(unsigned int), &xStart);
-			err |= clSetKernelArg(kernel, 4, sizeof(unsigned int), &yStart);
-			err |= clSetKernelArg(kernel, 5, sizeof(unsigned int), &widthBoundary);
-			err |= clSetKernelArg(kernel, 6, sizeof(unsigned int), &heightBoundary);
-			err |= clSetKernelArg(kernel, 7, sizeof(unsigned int), &globalSize[0]);
-			err |= clSetKernelArg(kernel, 8, sizeof(unsigned int), &imageWidth);
-			printf("uspio argumente: %s\n", TranslateOpenCLError(err));
-			err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalSize, localSize, 0, NULL, NULL);
-			//printf(TranslateOpenCLError(err));
-
-			// Wait for the command queue to get serviced before reading back results
+			}
+			//cekanje na zavrsetak kernela
 			clFinish(queue);
+			clReleaseKernel(kernel);
 
-			clEnqueueReadBuffer(queue, d_OutMatrix, CL_TRUE, 0, worldSize, matrix, 0, NULL, NULL);
-			printf(TranslateOpenCLError(err));
-			//printf("  %d  ", i);
-			clFinish(queue);
-			err = clEnqueueWriteBuffer(queue, d_InMatrix, CL_TRUE, 0, worldSize, matrix, 0, NULL, NULL);
-			clFinish(queue);
-
+			//kernel detector u prosljedjenoj RGB slici, a na osnovu prethodne i sljedece iteracije, pronalazi oscilatorski obrazac i oznacava ga posebnom bojom
+			//slika se cuva u blinkerRGB folderu
+			// **napomena : radi se detekcija Blinker-a (uz pomocne funkije isHorizontalBlinker i isVerticalBlinker)
 			kernel = clCreateKernel(program, "detector", &err);
-			err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_OutMatrix);
-			err |= clSetKernelArg(kernel, 1, sizeof(cl_mem), &d_imageSegment);
-			err |= clSetKernelArg(kernel, 2, sizeof(unsigned int), &xStart);
-			err |= clSetKernelArg(kernel, 3, sizeof(unsigned int), &yStart);
-			err |= clSetKernelArg(kernel, 4, sizeof(unsigned int), &widthBoundary);
-			err |= clSetKernelArg(kernel, 5, sizeof(unsigned int), &heightBoundary);
-			err |= clSetKernelArg(kernel, 6, sizeof(unsigned int), &globalSize[0]);
-			err |= clSetKernelArg(kernel, 7, sizeof(unsigned int), &imageWidth);
-			printf("uspio argumente za detector : %s\n", TranslateOpenCLError(err));
-			err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalSize, localSize, 0, NULL, NULL);
-			//printf(TranslateOpenCLError(err));
+			//isti princip kako i gore, razdvojeno je na dva dijela, jer globalna barijera ne radi kako je ocekivano
+			for (size_t kernelIteration = 0, startCol = 0; kernelIteration < kernelNum; kernelIteration++, startCol += offset)
+			{
+				int iterationOffset = offset * kernelIteration;
+
+				err = clSetKernelArg(kernel, 0, sizeof(cl_mem), reverse ? &d_OutMatrix : &d_InMatrix);
+				err = clSetKernelArg(kernel, 1, sizeof(cl_mem), reverse ? &d_InMatrix : &d_OutMatrix);
+				err |= clSetKernelArg(kernel, 2, sizeof(cl_mem), &d_imageSegment);
+				err |= clSetKernelArg(kernel, 3, sizeof(unsigned int), &globalSize[0]);
+				err |= clSetKernelArg(kernel, 4, sizeof(unsigned int), &startCol);
+				err |= clSetKernelArg(kernel, 5, sizeof(unsigned int), &offset);
+				err |= clSetKernelArg(kernel, 6, sizeof(unsigned int), &iterationOffset);
+
+				err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalSize, localSize, 0, NULL, NULL);
+
+			}
 			clFinish(queue);
+			clReleaseKernel(kernel);
+
+			//citanje rgb slike u kojoj su oznaceni svi pronadjeni oscilatorski obrasci
 			clEnqueueReadBuffer(queue, d_imageSegment, CL_TRUE, 0, bytes, bufferSeg, 0, NULL, NULL);
 			clFinish(queue);
 
+			//cuvanje .ppm slike, detektovani blinkeri su obojeni crvenom bojom
+			const std::string outFile2 = std::string("blinkerRGB\\imageWithDetectedBlinkers") + std::to_string(i + 1) + std::string(".ppm");
+			writePPMImage(outFile2.c_str(), bufferSeg, globalSize[0], globalSize[1]);
 
-			const std::string outFile = std::string("imageInPPM") + std::to_string(i + 1) + std::string(".ppm");
-			writePPMImage(outFile.c_str(), bufferSeg, imageWidth, imageHeight);
 			i++;
-		}
-		else if (input == 2) {
-			int x0, y0, width, height;
-			unsigned char* subsegment = nullptr;
-			printf("\nUnesi pocetne koordinate: \n");
-			scanf("%d %d", &x0, &y0);
-			printf("\nUnesi sirinu i visinu podsegmenta: \n");
-			scanf("%d %d", &width, &height);
 
-			if (x0 + width > globalSize[0] || y0 + height > globalSize[1]) {
-				printf("\nOpseg je van granica svijeta!\n");
+
+			reverse = !reverse;
+
+			printf("\nSegment sa detektovanim obrascima je uspjesno sacuvan!\n");
+
+		}
+
+		//korisnik zeli da izdvoji podsegment
+		else if (input == 2) {
+			printf("\nProcesiranje...\n");
+
+			int x0, y0, width, height;
+
+			unsigned char* subsegment = nullptr;
+
+			printf("\nUnesi pocetne koordinate: \n");
+			printf("x = ");
+			scanf(" %d", &x0);
+			printf("y = ");
+			scanf(" %d", &y0);
+
+			printf("\nUnesi sirinu i visinu podsegmenta: \n");
+			printf("sirina = ");
+			scanf(" %d", &width);
+			printf("visina = ");
+			scanf(" %d", &height);
+
+			if (static_cast<unsigned long long>(x0) + width > globalSize[0] || static_cast<unsigned long long>(y0) + height > globalSize[1]) {
+				printf("\nPodsegment je van granica svijeta! Cuvanje nije uspjesno!\n");
 			}
 			else {
+
 				cl_mem d_subsegment;
-				d_subsegment = clCreateBuffer(context, CL_MEM_READ_WRITE, (size_t)(width) * height, NULL, NULL);
+				d_subsegment = clCreateBuffer(context, CL_MEM_READ_WRITE, (size_t)(width)*height, NULL, NULL);
+
 				subsegment = (unsigned char*)malloc((size_t)width * height);
 
+				//kernel getSubsegment dohvata podsegment iz svijeta i smijesta ga u folder subsegment
 				kernel = clCreateKernel(program, "getSubsegment", &err);
-				err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_OutMatrix);
+
+				err = clSetKernelArg(kernel, 0, sizeof(cl_mem), reverse ? &d_InMatrix : &d_OutMatrix);
 				err |= clSetKernelArg(kernel, 1, sizeof(cl_mem), &d_subsegment);
 				err |= clSetKernelArg(kernel, 2, sizeof(unsigned int), &globalSize[0]);
 				err |= clSetKernelArg(kernel, 3, sizeof(unsigned int), &x0);
@@ -466,64 +512,69 @@ int main() {
 				err |= clSetKernelArg(kernel, 5, sizeof(unsigned int), &width);
 				err |= clSetKernelArg(kernel, 6, sizeof(unsigned int), &height);
 
-				printf("uspio argumente za subsegment : %s\n", TranslateOpenCLError(err));
 				err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalSize, localSize, 0, NULL, NULL);
-				printf(TranslateOpenCLError(err));
+				//printf(TranslateOpenCLError(err));
+
 				clFinish(queue);
+
+				//ucitavanje podsegmenta sa memorije gpu-a
 				clEnqueueReadBuffer(queue, d_subsegment, CL_TRUE, 0, (size_t)width * height, subsegment, 0, NULL, NULL);
 				clFinish(queue);
 
-				const std::string outFile = std::string("subsegment") + std::to_string(i + 1) + std::string(".pgm");
-				writeImage(outFile.c_str(), convertBinaryToBlackAndWhiteMatrix(subsegment, width*height), width, height);
+				//upisivanje podsegemnta
+				const std::string outFile = std::string("subsegment\\Subsegment") + std::to_string(i + 1) + std::string(".pgm");
+				writePGMImage(outFile.c_str(), convertBinaryToBlackAndWhiteMatrix(subsegment, width * height), width, height);
 
-				printf("Segment je uspjesno sacuvan!");
+				printf("\nPodsegment je uspjesno sacuvan!\n");
 				i++;
+				clReleaseKernel(kernel);
+				clReleaseMemObject(d_subsegment);
 			}
 		}
-
+		//korisnik je unio 1, odnosno zeli narednu iteraciju ili je unio [broj] odnosno zeli iteraciju koja je jednaka trenutnaIteracija + [broj]
 		else {
+
+			printf("\nProcesiranje...\n");
+			//kernel gameOfLife izracunava sljedecu(ili specifikovanu) iteraciju, te rezultat cuva u folderu regularIteration
 			kernel = clCreateKernel(program, "gameOfLife", &err);
+			//i -> trenutna iteracija    input -> [broj]   finish -> krajnja iteracija
 			int finish = i + input;
-			for (;i < finish; i++)
+
+			for (; i < finish; i++)
 			{
-				err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_InMatrix);
-				err |= clSetKernelArg(kernel, 1, sizeof(cl_mem), &d_OutMatrix);
-				err |= clSetKernelArg(kernel, 2, sizeof(int), &globalSize[0]);
-				err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalSize, localSize, 0, NULL, NULL);
+				//pokrecem onoliko kernela koliko je korisnik specifikovao
+				for (size_t kernelIteration = 0, startCol = 0; kernelIteration < kernelNum; kernelIteration++, startCol += offset)
+				{
+					int iterationOffset = offset * kernelIteration;
+					err = clSetKernelArg(kernel, 0, sizeof(cl_mem), reverse ? &d_OutMatrix : &d_InMatrix);
+					err |= clSetKernelArg(kernel, 1, sizeof(cl_mem), reverse ? &d_InMatrix : &d_OutMatrix);
+					err |= clSetKernelArg(kernel, 2, sizeof(int), &globalSize[0]);
+					err |= clSetKernelArg(kernel, 3, sizeof(int), &startCol);
+					err |= clSetKernelArg(kernel, 4, sizeof(int), &offset);
+					err |= clSetKernelArg(kernel, 5, sizeof(int), &iterationOffset);
+					err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalSize, localSize, 0, NULL, NULL);
+				}
 
-				printf(TranslateOpenCLError(err));
-				clEnqueueReadBuffer(queue, d_OutMatrix, CL_TRUE, 0, worldSize, matrix, 0, NULL, NULL);
-				printf(TranslateOpenCLError(err));
-				printf("  %d  ", i);
-				clFinish(queue);
-				err = clEnqueueWriteBuffer(queue, d_InMatrix, CL_TRUE, 0, worldSize, matrix, 0, NULL, NULL);
 				clFinish(queue);
 
+				reverse = !reverse;
 			}
 
-			const std::string outFile = std::string("image") + std::to_string(i + 1) + std::string(".pgm");
-			writeImage(outFile.c_str(), convertBinaryToBlackAndWhiteMatrix(matrix, globalSize[0] * globalSize[1]), globalSize[0], globalSize[1]);
+			//ucitavanje slike radi cuvanja
+			clEnqueueReadBuffer(queue, reverse ? d_InMatrix : d_OutMatrix, CL_TRUE, 0, worldSize, matrix, 0, NULL, NULL);
+			clFinish(queue);
+
+			//cuvanje slike
+			const std::string outFile = std::string("regularIteration\\image") + std::to_string(i + 1) + std::string(".pgm");
+			writePGMImage(outFile.c_str(), convertBinaryToBlackAndWhiteMatrix(matrix, globalSize[0] * globalSize[1]), globalSize[0], globalSize[1]);
+
 			// Wait for the command queue to get serviced before reading back results
 			clFinish(queue);
+
+			printf("\nIteracije su odradjene. Slika je uspjesno sacuvana!\n");
+			clReleaseKernel(kernel);
 		}
-		// Set the arguments to our compute kernel
 
-
-		// Read the results from the device
-
-
-		/*for (size_t k = 0; k < xStart + imageWidth; k++)
-		{
-			for (size_t j = 0; j < yStart + imageHeight; j++)
-			{
-				if (isVerticalBlinker(matrix, k, j, globalSize[0])) {
-					printf("uspoio i nasaooooooooooooo  %d" + (i + 1));
-					std::this_thread::sleep_for(std::chrono::seconds(1));
-					break;
-				}
-			}
-		}
-		printf("\nnije nasao  %d\n" + i);*/
 	}
 
 	// release OpenCL resources
@@ -537,35 +588,7 @@ int main() {
 	free(kernelSource);
 }
 
-
-unsigned char ToByte(unsigned char b[8])
-{
-	unsigned char c = 0;
-	for (int i = 0; i < 8; ++i)
-		if (b[i])
-			c |= 1 << i;
-	return c;
-}
-
-void FromByte(unsigned char c, unsigned char b[8])
-{
-	for (int i = 0; i < 8; ++i)
-		b[i] = (c & (1 << i)) != 0;
-}
-
-unsigned char* compressMatrix(unsigned char* matrix, const unsigned int width, const unsigned int height) {
-
-	unsigned char* compMat = (unsigned char*)malloc(width * height / 8);
-	unsigned char* eightBitArr = (unsigned char*)malloc(8);
-	for (size_t i = 0, j = 0; i < width * height; i += 8, j++)
-	{
-		memcpy(eightBitArr, &matrix[i], 8 * sizeof(*matrix));
-		compMat[j] = ToByte(eightBitArr);
-	}
-	return compMat;
-}
-
-unsigned char* initMatrix(cl_program program, cl_kernel kernel, cl_context context, cl_command_queue queue, size_t* globalSize, size_t* localSize) {
+unsigned char* initMatrix(cl_program program, cl_kernel kernel, cl_context context, cl_command_queue queue, size_t* globalSize, size_t* localSize, int kernelNum) {
 
 
 	cl_mem d_matrix;
@@ -579,19 +602,77 @@ unsigned char* initMatrix(cl_program program, cl_kernel kernel, cl_context conte
 	// Create the compute kernel in the program we wish to run
 	kernel = clCreateKernel(program, "initMatrix", &err);
 
-	// Create the input and output arrays in device memory for our calculation
+	// alokacija prostara za inicijalnu matricu na kernelu
 	d_matrix = clCreateBuffer(context, CL_MEM_READ_WRITE, globalSize[0] * globalSize[1], NULL, NULL);
 
-	// Set the arguments to our compute kernel
-	err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_matrix);
-	err |= clSetKernelArg(kernel, 1, sizeof(unsigned int), &globalSize[0]);
-	err |= clSetKernelArg(kernel, 2, sizeof(unsigned int), &globalSize[1]);
+	int offset = globalSize[0] / kernelNum;
 
-	// Execute the kernel over the entire range of the data set  
-	err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalSize, localSize, 0, NULL, NULL);
+	//pokrecem onoliko kernela koliko je korisnik specifikovao
+	for (size_t kernelIteration = 0, startCol = 0; kernelIteration < kernelNum; kernelIteration++, startCol += offset)
+	{
 
+		unsigned int iterationOffset = offset * kernelIteration;
+		// Set the arguments to our compute kernel
+		err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_matrix);
+		err |= clSetKernelArg(kernel, 1, sizeof(unsigned int), &globalSize[0]);
+		err |= clSetKernelArg(kernel, 2, sizeof(unsigned int), &globalSize[1]);
+		err |= clSetKernelArg(kernel, 3, sizeof(unsigned int), &offset);
+		err |= clSetKernelArg(kernel, 4, sizeof(unsigned int), &iterationOffset);
+		err |= clSetKernelArg(kernel, 5, sizeof(unsigned int), &startCol);
+
+		// Execute the kernel over the entire range of the data set  
+		err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalSize, localSize, 0, NULL, NULL);
+	}
 
 	clFinish(queue);
+
+
+	char answer = -1;
+	int xStart, yStart;
+	kernel = clCreateKernel(program, "userInitMatrix", &err);
+	do {
+		printf("\nDa li zelite inicijalizovati svijet rucno?(y/n): ");
+		answer = getCharacterWithEscape("yn");
+
+		if (answer == 'y') {
+			char repeat = -1;
+			do {
+				printf("\nUnesite koordinate : \n");
+				printf("x = ");
+				scanf(" %d", &xStart);
+				printf("y = ");
+				scanf(" %d", &yStart);
+
+				if (xStart > globalSize[0] || xStart < 0 || yStart > globalSize[1] || yStart < 0) {
+
+					printf("\nIndeksi su izvan granica svijeta(\"sirina\" i \"visina\" svijeta -> %d), da li zelite da pokusate ponovo?(y/n): \n", (int)globalSize[0]);
+					repeat = getCharacterWithEscape("yn");
+				}
+				else {
+					for (size_t kernelIteration = 0, startCol = 0; kernelIteration < kernelNum; kernelIteration++, startCol += offset)
+					{
+
+						unsigned int iterationOffset = offset * kernelIteration;
+						//podesavanje parametara kernela
+						err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_matrix);
+
+						err |= clSetKernelArg(kernel, 1, sizeof(unsigned int), &iterationOffset);
+						err |= clSetKernelArg(kernel, 2, sizeof(unsigned int), &xStart);
+						err |= clSetKernelArg(kernel, 3, sizeof(unsigned int), &yStart);
+						err |= clSetKernelArg(kernel, 4, sizeof(unsigned int), &globalSize[0]);
+
+						// Execute the kernel over the entire range of the data set  
+						err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalSize, localSize, 0, NULL, NULL);
+
+					}
+					// Wait for the command queue to get serviced before reading back results
+					clFinish(queue);
+
+				}
+			} while (repeat == 'y');
+		}
+	} while (answer == 'y');
+
 
 	clEnqueueReadBuffer(queue, d_matrix, CL_TRUE, 0, globalSize[0] * globalSize[1], matrix, 0, NULL, NULL);
 

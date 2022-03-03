@@ -186,7 +186,6 @@
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="Sa neta.cpp" />
     <ClCompile Include="Zadatak3.cpp" />
   </ItemGroup>
   <ItemGroup>
